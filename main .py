@@ -1,21 +1,33 @@
 import streamlit as st
 from streamlit_js_eval import get_geolocation
 
-st.title("המיקום שלי")
+st.title("המיקום שלי (iOS)")
 
-st.write("לחץ על הכפתור כדי לבקש הרשאת מיקום מהדפדפן")
+# מצב/אחסון
+if "geo_requested" not in st.session_state:
+    st.session_state.geo_requested = False
+if "geo_result" not in st.session_state:
+    st.session_state.geo_result = None
 
-if st.button("קבל מיקום"):
-    location = get_geolocation()
+# כפתור "רגיל" — אבל אנחנו רק מסמנים מצב
+st.button("קבל מיקום", key="geo_btn")
+if st.session_state.get("geo_btn"):
+    st.session_state.geo_requested = True
 
-    if location:
-        lat = location["coords"]["latitude"]
-        lon = location["coords"]["longitude"]
-        acc = location["coords"]["accuracy"]
+# הקריאה עצמה (לא “בתוך” if של הכפתור)
+if st.session_state.geo_requested:
+    loc = get_geolocation()
+    st.session_state.geo_result = loc
+    st.session_state.geo_requested = False
 
-        st.success("המיקום התקבל ✅")
-        st.write(f"Latitude: {lat}")
-        st.write(f"Longitude: {lon}")
-        st.write(f"דיוק (מטרים): {acc}")
-    else:
-        st.error("לא התקבלה הרשאה או שהדפדפן חסם את המיקום")
+# הצגת תוצאה / שגיאה
+loc = st.session_state.geo_result
+if loc is None:
+    st.info("לחץ 'קבל מיקום' ואשר הרשאה בדפדפן.")
+elif isinstance(loc, dict) and "error" in loc:
+    st.error(f"שגיאת מיקום (code={loc['error'].get('code')}): {loc['error'].get('message')}")
+else:
+    st.success("המיקום התקבל ✅")
+    st.write("Latitude:", loc["coords"]["latitude"])
+    st.write("Longitude:", loc["coords"]["longitude"])
+    st.write("Accuracy (m):", loc["coords"].get("accuracy"))
