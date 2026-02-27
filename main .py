@@ -1,17 +1,14 @@
 import streamlit as st
 from streamlit_geolocation import streamlit_geolocation
 
-st.title("המיקום שלי (iOS)")
-
-st.write("לחץ על הכפתור ואשר הרשאת מיקום בדפדפן.")
+st.title("Debug Geolocation")
 
 location = streamlit_geolocation()
 
-# הספרייה מחזירה dict; אם אין הרשאה/אין נתונים זה יכול להיות None/ריק
+st.write("RAW location object:")
+st.json(location)  # חשוב! זה יראה לך בדיוק איך זה בנוי
+
 if location:
     st.success("המיקום התקבל ✅")
-    st.write("Latitude:", location.get("latitude"))
-    st.write("Longitude:", location.get("longitude"))
-    st.write("Accuracy (m):", location.get("accuracy"))
 else:
-    st.info("עדיין אין מיקום. אשר הרשאה או נסה שוב.")
+    st.warning("אין נתוני מיקום עדיין")
