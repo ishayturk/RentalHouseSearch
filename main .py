@@ -1,8 +1,7 @@
 import math
 import random
-import time
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 import requests
 import streamlit as st
@@ -33,6 +32,7 @@ def geocode_address(address: str) -> Optional[Dict[str, float]]:
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
     headers = {"User-Agent": "rental-house-search-demo/1.0 (streamlit)"}
+
     try:
         r = requests.get(url, params=params, headers=headers, timeout=15)
         r.raise_for_status()
@@ -54,8 +54,9 @@ class Listing:
     address: str
     price: int
     rooms: float
-    seller_type: str  # "private" | "broker" | "unknown"
-    features: List[str]  # e.g. ["parking", "elevator", "balcony", "mamad"]
+    seller_type: str          # "private" | "broker" | "unknown"
+    features: List[str]       # e.g. ["parking", "elevator", "balcony", "mamad"]
+    pets_policy: str          # "yes" | "no" | "unknown"
     lat: float
     lon: float
     url: str
@@ -82,6 +83,7 @@ class MockProvider:
             # random point within ~radius
             angle = rnd.random() * 2 * math.pi
             dist = rnd.random() * radius_m
+
             # rough meters->degrees conversion
             dlat = (dist * math.cos(angle)) / 111_320.0
             dlon = (dist * math.sin(angle)) / (111_320.0 * math.cos(math.radians(center_lat)) + 1e-9)
@@ -92,8 +94,10 @@ class MockProvider:
             price = rnd.randrange(3500, 14500, 100)
             rooms = rnd.choice([1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0])
             seller_type = rnd.choice(["private", "broker", "unknown"])
-
             feats = [f for f in self.FEATURE_POOL if rnd.random() < 0.35]
+
+            # Pets policy: biased to "unknown" to mimic real-world missing info
+            pets_policy = rnd.choice(["yes", "no", "unknown", "unknown", "unknown"])
 
             listings.append(
                 Listing(
@@ -104,6 +108,7 @@ class MockProvider:
                     rooms=rooms,
                     seller_type=seller_type,
                     features=feats,
+                    pets_policy=pets_policy,
                     lat=lat,
                     lon=lon,
                     url="https://example.com/listing",
@@ -123,29 +128,40 @@ def apply_filters(
     max_price: Optional[int],
     rooms_min: Optional[float],
     rooms_max: Optional[float],
-    seller_filter: str,  # "any" | "private_only" | "broker_only"
+    seller_filter: str,          # "any" | "private_only" | "broker_only"
     required_features: List[str],
+    pets_required: bool,         # If True -> exclude only explicit "no"
 ) -> List[Listing]:
     out = []
     for x in listings:
         # radius
         if haversine_m(center_lat, center_lon, x.lat, x.lon) > radius_m:
             continue
+
         # price
         if max_price is not None and x.price > max_price:
             continue
+
         # rooms
         if rooms_min is not None and x.rooms < rooms_min:
             continue
         if rooms_max is not None and x.rooms > rooms_max:
             continue
+
         # seller
         if seller_filter == "private_only" and x.seller_type != "private":
             continue
         if seller_filter == "broker_only" and x.seller_type != "broker":
             continue
-        # features
+
+        # features: must include ALL selected
         if any(f not in x.features for f in required_features):
+            continue
+
+        # pets: special rule
+        # If user wants pets -> exclude only listings that EXPLICITLY say "no".
+        # Unknown stays included.
+        if pets_required and x.pets_policy == "no":
             continue
 
         out.append(x)
@@ -160,6 +176,28 @@ def apply_filters(
 # -----------------------------
 st.set_page_config(page_title="חיפוש דירות (MVP)", layout="wide")
 st.title("חיפוש דירות להשכרה (MVP)")
+
+feature_labels = {
+    "parking": "חניה",
+    "elevator": "מעלית",
+    "balcony": "מרפסת",
+    "mamad": "ממ״ד",
+    "storage": "מחסן",
+    "furnished": "מרוהט",
+    "ac": "מיזוג",
+}
+
+seller_labels = {
+    "private": "ללא תיווך",
+    "broker": "תיווך",
+    "unknown": "לא ידוע",
+}
+
+pets_labels = {
+    "yes": "מותר",
+    "no": "אסור",
+    "unknown": "לא מצוין",
+}
 
 with st.sidebar:
     st.header("חיפוש")
@@ -182,30 +220,28 @@ with st.sidebar:
         index=0,
     )[0]
 
+    pets_required = st.checkbox(
+        "בעלי חיים (סנן רק מודעות שאוסרות במפורש)",
+        value=False,
+        help="אם מסומן: נשמור מודעות שבהן לא כתוב כלום על בעלי חיים, ונוציא רק כאלה שכתוב בהן במפורש 'אסור/ללא בעלי חיים'.",
+    )
+
     st.markdown("**מאפיינים** (חייבים להיות קיימים במודעה)")
-    feature_labels = {
-        "parking": "חניה",
-        "elevator": "מעלית",
-        "balcony": "מרפסת",
-        "mamad": "ממ״ד",
-        "storage": "מחסן",
-        "furnished": "מרוהט",
-        "ac": "מיזוג",
-    }
     required_features = []
     for k, label in feature_labels.items():
         if st.checkbox(label, value=False):
             required_features.append(k)
 
     st.divider()
-    per_page = 10
 
+    per_page = 10
     if "page" not in st.session_state:
         st.session_state.page = 0
 
     run_search = st.button("חפש")
 
-# Geocode + Search trigger logic
+
+# Search trigger logic
 if run_search:
     st.session_state.page = 0
 
@@ -233,6 +269,7 @@ filtered = apply_filters(
     rooms_max=rooms_max,
     seller_filter=seller_filter,
     required_features=required_features,
+    pets_required=pets_required,
 )
 
 total = len(filtered)
@@ -263,17 +300,21 @@ if not page_items:
 
 for x in page_items:
     dist = int(haversine_m(center_lat, center_lon, x.lat, x.lon))
-    seller_txt = {"private": "ללא תיווך", "broker": "תיווך", "unknown": "לא ידוע"}.get(x.seller_type, "לא ידוע")
     feats_txt = " · ".join([feature_labels.get(f, f) for f in x.features]) or "—"
+
     with st.container(border=True):
         c1, c2, c3 = st.columns([3, 1, 1])
+
         with c1:
             st.markdown(f"### {x.title}")
             st.write(f"{x.address} · {dist} מטר מהמרכז")
             st.write(f"מאפיינים: {feats_txt}")
+            st.write(f"בעלי חיים: **{pets_labels.get(x.pets_policy, 'לא מצוין')}**")
+
         with c2:
             st.metric("מחיר", f"₪{x.price:,}")
             st.write(f"חדרים: {x.rooms:g}")
+
         with c3:
-            st.write(f"סוג מוכר: **{seller_txt}**")
+            st.write(f"סוג מוכר: **{seller_labels.get(x.seller_type, 'לא ידוע')}**")
             st.link_button("למודעה", x.url)
